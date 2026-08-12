@@ -19,14 +19,22 @@
     .declaration { display: flex; align-items: flex-start; gap: 8px; background: #fff8e1; padding: 10px; border-radius: 6px; }
     .declaration input { width: auto; margin: 4px 0 0 0; }
     .declaration span { font-size: 13px; }
-    #photoPreviewBox { display:none; text-align:center; margin-top:8px; }
-    #photoPreviewBox img { width: 100%; border-radius: 6px; border: 1px solid #ddd; }
+    .preview-box { display:none; text-align:center; margin-top:8px; }
+    .preview-box img { width: 100%; border-radius: 6px; border: 1px solid #ddd; }
     .photo-status { font-size: 13px; color: #555; }
     .hidden { display: none !important; }
+    #offlineBanner { display:none; background:#fff3cd; color:#7a5b00; padding:10px; border-radius:6px; font-size:13px; margin-bottom:10px; }
+    #offlineBanner button { width:auto; padding:6px 12px; font-size:13px; margin-top:6px; }
+    video { width:100%; border-radius:6px; display:none; background:#000; }
   </style>
 </head>
 <body id="pageBody">
 <div class="bg-overlay">
+
+  <div id="offlineBanner">
+    📴 <span id="offlineText"></span>
+    <div><button type="button" onclick="trySync()">🔄 Sync Now</button></div>
+  </div>
 
   <div class="logo-wrap">
     <img id="companyLogo" src="" alt="Company Logo" style="display:none;">
@@ -68,16 +76,29 @@
       <textarea id="remarks" rows="3" placeholder="e.g. Order discuss hua, samples diye..."></textarea>
     </div>
 
+    <!-- CUSTOMER PHOTO (back camera) -->
     <div id="photoBlock">
       <label>Visited Customer Photo (Live Camera Only)</label>
-      <video id="cameraVideo" autoplay playsinline style="width:100%; border-radius:6px; display:none; background:#000;"></video>
-      <button type="button" onclick="startCamera()" id="btnOpenCamera">📷 Open Camera</button>
-      <button type="button" onclick="capturePhoto()" id="btnCapture" style="display:none;">📸 Capture Photo</button>
+      <video id="cameraVideo" playsinline autoplay></video>
+      <button type="button" onclick="startCamera('customer')" id="btnOpenCamera">📷 Open Camera</button>
+      <button type="button" onclick="capturePhoto('customer')" id="btnCapture" style="display:none;">📸 Capture Photo</button>
       <div class="photo-status" id="photoStatus"></div>
-
-      <div id="photoPreviewBox">
+      <div id="photoPreviewBox" class="preview-box">
         <img id="photoPreview">
-        <button class="secondary" onclick="retakePhoto()">🔄 Retake Photo</button>
+        <button class="secondary" onclick="retakePhoto('customer')">🔄 Retake Photo</button>
+      </div>
+    </div>
+
+    <!-- EMPLOYEE SELFIE (front camera) -->
+    <div id="selfieBlock">
+      <label>Your Selfie (Live Camera Only)</label>
+      <video id="selfieVideo" playsinline autoplay></video>
+      <button type="button" onclick="startCamera('selfie')" id="btnOpenSelfieCamera">🤳 Open Selfie Camera</button>
+      <button type="button" onclick="capturePhoto('selfie')" id="btnCaptureSelfie" style="display:none;">📸 Capture Selfie</button>
+      <div class="photo-status" id="selfieStatus"></div>
+      <div id="selfiePreviewBox" class="preview-box">
+        <img id="selfiePreview">
+        <button class="secondary" onclick="retakePhoto('selfie')">🔄 Retake Selfie</button>
       </div>
     </div>
 
@@ -98,12 +119,14 @@
   <script>
     // 🔴 YAHAN APNI APPS SCRIPT WEB APP URL DAALEIN 🔴
     var APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxsbRFDeJSeq9IOOvZHdnXNMvsLh69aRnOUzf6_gspxxWnQ9-aN9O1Omj70N8NOa7N8mg/exec";
+    var PENDING_KEY = "pm_pending_visits";
 
     var settings = {};
     var loggedIn = {};
     var currentLat = null, currentLng = null, currentAddress = "", currentAccuracy = null;
     var watermarkedPhotoBase64 = null;
-    var videoStream = null;
+    var selfiePhotoBase64 = null;
+    var customerStream = null, selfieStream = null;
 
     function callApi(payload) {
       return fetch(APPS_SCRIPT_URL, {
@@ -113,7 +136,13 @@
       }).then(res => res.json());
     }
 
-    // ---------- LOAD SETTINGS ON PAGE OPEN ----------
+    function isYes(val) {
+      return val && val.toString().trim().toUpperCase() === "YES";
+    }
+
+    // ============================================
+    // SETTINGS
+    // ============================================
     function loadSettings() {
       callApi({ action: "getSettings" }).then(function (res) {
         if (!res.success) {
@@ -124,7 +153,6 @@
         applySettings();
       }).catch(function (err) {
         document.getElementById('loginStatus').innerText = "⚠️ Settings error: " + err.message;
-        console.error("Settings load failed:", err);
       });
     }
 
@@ -154,25 +182,29 @@
       document.getElementById('remarksBlock').style.display = isYes(settings.show_remarks) ? 'block' : 'none';
       document.getElementById('declarationBlock').style.display = isYes(settings.declaration) ? 'flex' : 'none';
 
-      // Photo / Live Camera dono me se koi bhi YES ho to hi photo section dikhega
       var needPhoto = isYes(settings.photo_required) || isYes(settings.live_camera_required);
       document.getElementById('photoBlock').style.display = needPhoto ? 'block' : 'none';
+
+      var needSelfie = isYes(settings.selfie_required);
+      document.getElementById('selfieBlock').style.display = needSelfie ? 'block' : 'none';
 
       checkEnableSubmit();
     }
 
-    function isYes(val) {
-      return val && val.toString().trim().toUpperCase() === "YES";
-    }
-
     loadSettings();
+    updatePendingBanner();
+    window.addEventListener('online', trySync);
 
-    // ---------- LOGIN ----------
+    // ============================================
+    // LOGIN
+    // ============================================
     function checkLogin() {
       var empId = document.getElementById('loginEmployee').value.trim();
       var loginStatus = document.getElementById('loginStatus');
       if (!empId) { loginStatus.innerText = "Employee ID bharein"; return; }
       loginStatus.innerText = "Checking...";
+
+      loadSettings();
 
       callApi({ action: "verifyEmployee", empId: empId })
         .then(function (result) {
@@ -188,72 +220,94 @@
             loginStatus.innerText = "❌ Employee ID nahi mila.";
           }
         })
-        .catch(function (err) { loginStatus.innerText = "Error: " + err.message; });
+        .catch(function (err) {
+          loginStatus.innerText = "⚠️ Network nahi mila. Offline entries baad me kaam karengi, lekin login ke liye internet chahiye.";
+        });
     }
 
     function logout() {
       loggedIn = {};
       watermarkedPhotoBase64 = null;
-      stopCamera();
+      selfiePhotoBase64 = null;
+      stopCamera('customer');
+      stopCamera('selfie');
       document.getElementById('formSection').style.display = 'none';
       document.getElementById('loginSection').style.display = 'block';
       document.getElementById('loginEmployee').value = "";
       document.getElementById('loginStatus').innerText = "";
     }
 
-    // ---------- LIVE CAMERA ----------
-    function startCamera() {
-      var video = document.getElementById('cameraVideo');
-      var photoStatus = document.getElementById('photoStatus');
-      photoStatus.innerText = "";
+    // ============================================
+    // CAMERA (customer = back camera, selfie = front camera)
+    // ============================================
+    function startCamera(mode) {
+      var videoId = mode === 'selfie' ? 'selfieVideo' : 'cameraVideo';
+      var openBtnId = mode === 'selfie' ? 'btnOpenSelfieCamera' : 'btnOpenCamera';
+      var captureBtnId = mode === 'selfie' ? 'btnCaptureSelfie' : 'btnCapture';
+      var statusId = mode === 'selfie' ? 'selfieStatus' : 'photoStatus';
+      var facing = mode === 'selfie' ? 'user' : 'environment';
 
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
+      var video = document.getElementById(videoId);
+      document.getElementById(statusId).innerText = "";
+
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: false })
         .then(function (stream) {
-          videoStream = stream;
+          if (mode === 'selfie') selfieStream = stream; else customerStream = stream;
           video.srcObject = stream;
           video.style.display = 'block';
-          document.getElementById('btnOpenCamera').style.display = 'none';
-          document.getElementById('btnCapture').style.display = 'block';
+          document.getElementById(openBtnId).style.display = 'none';
+          document.getElementById(captureBtnId).style.display = 'block';
         })
         .catch(function (err) {
-          photoStatus.innerText = "Camera access error: " + err.message;
+          document.getElementById(statusId).innerText = "Camera access error: " + err.message;
         });
     }
 
-    function capturePhoto() {
-      var photoStatus = document.getElementById('photoStatus');
-      photoStatus.innerText = "Location fetch ho raha hai...";
-      document.getElementById('btnSubmit').disabled = true;
+    function capturePhoto(mode) {
+      var statusId = mode === 'selfie' ? 'selfieStatus' : 'photoStatus';
+      var status = document.getElementById(statusId);
 
-      navigator.geolocation.getCurrentPosition(function (position) {
-        currentLat = position.coords.latitude.toFixed(6);
-        currentLng = position.coords.longitude.toFixed(6);
-        currentAccuracy = Math.round(position.coords.accuracy);
+      if (mode === 'customer') {
+        status.innerText = "Location fetch ho raha hai...";
+        document.getElementById('btnSubmit').disabled = true;
 
-        var maxAcc = settings.max_gps_accuracy ? parseFloat(settings.max_gps_accuracy) : null;
-        if (maxAcc && currentAccuracy > maxAcc) {
-          photoStatus.innerText = "⚠️ GPS accuracy kam hai (" + currentAccuracy + "m). Khuli jagah me jaakar dobara try karein.";
-          return;
-        }
+        navigator.geolocation.getCurrentPosition(function (position) {
+          currentLat = position.coords.latitude.toFixed(6);
+          currentLng = position.coords.longitude.toFixed(6);
+          currentAccuracy = Math.round(position.coords.accuracy);
 
-        fetch("https://nominatim.openstreetmap.org/reverse?format=json&lat=" + currentLat + "&lon=" + currentLng)
-          .then(res => res.json())
-          .then(placeData => {
-            currentAddress = placeData.display_name || "N/A";
-            drawWatermarkFromVideo();
-          })
-          .catch(() => {
-            currentAddress = "N/A";
-            drawWatermarkFromVideo();
-          });
+          var maxAcc = settings.max_gps_accuracy ? parseFloat(settings.max_gps_accuracy) : null;
+          if (maxAcc && currentAccuracy > maxAcc) {
+            status.innerText = "⚠️ GPS accuracy kam hai (" + currentAccuracy + "m). Khuli jagah me jaakar dobara try karein.";
+            return;
+          }
 
-      }, function (error) {
-        photoStatus.innerText = "Location error: " + error.message;
-      }, { enableHighAccuracy: true, timeout: 10000 });
+          fetch("https://nominatim.openstreetmap.org/reverse?format=json&lat=" + currentLat + "&lon=" + currentLng)
+            .then(res => res.json())
+            .then(placeData => {
+              currentAddress = placeData.display_name || "N/A";
+              drawWatermark('customer');
+            })
+            .catch(() => {
+              currentAddress = "N/A";
+              drawWatermark('customer');
+            });
+
+        }, function (error) {
+          status.innerText = "Location error: " + error.message;
+        }, { enableHighAccuracy: true, timeout: 10000 });
+      } else {
+        drawWatermark('selfie');
+      }
     }
 
-    function drawWatermarkFromVideo() {
-      var video = document.getElementById('cameraVideo');
+    function drawWatermark(mode) {
+      var videoId = mode === 'selfie' ? 'selfieVideo' : 'cameraVideo';
+      var previewId = mode === 'selfie' ? 'selfiePreview' : 'photoPreview';
+      var previewBoxId = mode === 'selfie' ? 'selfiePreviewBox' : 'photoPreviewBox';
+      var statusId = mode === 'selfie' ? 'selfieStatus' : 'photoStatus';
+
+      var video = document.getElementById(videoId);
       var canvas = document.getElementById('hiddenCanvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -262,9 +316,8 @@
 
       if (isYes(settings.watermark_required)) {
         var now = new Date();
-        var dateTimeStr = now.toLocaleString();
-        var line1 = loggedIn.name + " | " + dateTimeStr;
-        var line2 = "Lat: " + currentLat + ", Lng: " + currentLng;
+        var line1 = loggedIn.name + " | " + now.toLocaleString();
+        var line2 = currentLat ? ("Lat: " + currentLat + ", Lng: " + currentLng) : "";
 
         var fontSize = Math.max(16, Math.floor(canvas.width / 40));
         ctx.font = fontSize + "px Arial";
@@ -274,51 +327,91 @@
         ctx.fillRect(0, canvas.height - barHeight, canvas.width, barHeight);
         ctx.fillStyle = "#ffffff";
         ctx.fillText(line1, 10, canvas.height - barHeight + fontSize);
-        ctx.fillText(line2, 10, canvas.height - barHeight + fontSize * 2);
+        if (line2) ctx.fillText(line2, 10, canvas.height - barHeight + fontSize * 2);
       }
 
-      watermarkedPhotoBase64 = canvas.toDataURL('image/jpeg', 0.85);
+      var result = canvas.toDataURL('image/jpeg', 0.85);
+      if (mode === 'selfie') selfiePhotoBase64 = result; else watermarkedPhotoBase64 = result;
 
-      document.getElementById('photoPreview').src = watermarkedPhotoBase64;
-      document.getElementById('photoPreviewBox').style.display = 'block';
-      document.getElementById('photoStatus').innerText = "✅ Photo ready";
+      document.getElementById(previewId).src = result;
+      document.getElementById(previewBoxId).style.display = 'block';
+      document.getElementById(statusId).innerText = "✅ Photo ready";
 
-      stopCamera();
+      stopCamera(mode);
       checkEnableSubmit();
     }
 
-    function stopCamera() {
-      if (videoStream) {
-        videoStream.getTracks().forEach(function (track) { track.stop(); });
-        videoStream = null;
+    function stopCamera(mode) {
+      var stream = mode === 'selfie' ? selfieStream : customerStream;
+      if (stream) {
+        stream.getTracks().forEach(function (track) { track.stop(); });
+        if (mode === 'selfie') selfieStream = null; else customerStream = null;
       }
-      document.getElementById('cameraVideo').style.display = 'none';
-      document.getElementById('btnCapture').style.display = 'none';
-      document.getElementById('btnOpenCamera').style.display = 'block';
+      var videoId = mode === 'selfie' ? 'selfieVideo' : 'cameraVideo';
+      var openBtnId = mode === 'selfie' ? 'btnOpenSelfieCamera' : 'btnOpenCamera';
+      var captureBtnId = mode === 'selfie' ? 'btnCaptureSelfie' : 'btnCapture';
+      document.getElementById(videoId).style.display = 'none';
+      document.getElementById(captureBtnId).style.display = 'none';
+      document.getElementById(openBtnId).style.display = 'block';
     }
 
-    function retakePhoto() {
-      document.getElementById('photoPreviewBox').style.display = 'none';
-      document.getElementById('photoStatus').innerText = "";
-      watermarkedPhotoBase64 = null;
+    function retakePhoto(mode) {
+      var previewBoxId = mode === 'selfie' ? 'selfiePreviewBox' : 'photoPreviewBox';
+      var statusId = mode === 'selfie' ? 'selfieStatus' : 'photoStatus';
+      document.getElementById(previewBoxId).style.display = 'none';
+      document.getElementById(statusId).innerText = "";
+      if (mode === 'selfie') selfiePhotoBase64 = null; else watermarkedPhotoBase64 = null;
       checkEnableSubmit();
-      startCamera();
+      startCamera(mode);
     }
 
     document.getElementById('declaration').addEventListener('change', checkEnableSubmit);
 
     function checkEnableSubmit() {
       var photoOk = isYes(settings.photo_required) ? !!watermarkedPhotoBase64 : true;
+      var selfieOk = isYes(settings.selfie_required) ? !!selfiePhotoBase64 : true;
       var declOk = isYes(settings.declaration) ? document.getElementById('declaration').checked : true;
-      document.getElementById('btnSubmit').disabled = !(photoOk && declOk);
+      document.getElementById('btnSubmit').disabled = !(photoOk && selfieOk && declOk);
     }
 
-    // ---------- SUBMIT ----------
+    // ============================================
+    // SUBMIT (with offline fallback)
+    // ============================================
+    function buildPayload() {
+      var visitCity = titleCase(document.getElementById('visitCity').value.trim());
+      var firmName = document.getElementById('firmName').value.trim();
+      var contactPerson = document.getElementById('contactPerson').value.trim();
+      var pinCode = document.getElementById('pinCode').value.trim();
+      var remarks = document.getElementById('remarks').value.trim();
+
+      return {
+        action: "saveVisit",
+        data: {
+          empId: loggedIn.empId,
+          empName: loggedIn.name,
+          hq: loggedIn.hq,
+          email: loggedIn.email,
+          visitCity: visitCity,
+          firmName: firmName,
+          contactPerson: contactPerson,
+          declaration: isYes(settings.declaration) ? "Yes" : "N/A",
+          pinCode: pinCode,
+          lat: currentLat,
+          lng: currentLng,
+          accuracy: currentAccuracy,
+          address: currentAddress,
+          remarks: remarks,
+          photoBase64: watermarkedPhotoBase64,
+          selfieBase64: selfiePhotoBase64
+        }
+      };
+    }
+
     function submitVisit() {
       var status = document.getElementById('status');
       var btn = document.getElementById('btnSubmit');
 
-      var visitCity = titleCase(document.getElementById('visitCity').value.trim());
+      var visitCity = document.getElementById('visitCity').value.trim();
       var firmName = document.getElementById('firmName').value.trim();
       var contactPerson = document.getElementById('contactPerson').value.trim();
       var pinCode = document.getElementById('pinCode').value.trim();
@@ -336,34 +429,17 @@
         status.innerText = "Photo capture karein.";
         return;
       }
-      if (isYes(settings.address_required) && !currentAddress) {
-        status.innerText = "Address fetch nahi hui, dobara photo capture karein.";
+      if (isYes(settings.selfie_required) && !selfiePhotoBase64) {
+        status.innerText = "Selfie capture karein.";
         return;
       }
 
       btn.disabled = true;
       status.innerText = "Saving...";
 
-      callApi({
-        action: "saveVisit",
-        data: {
-          empId: loggedIn.empId,
-          empName: loggedIn.name,
-          hq: loggedIn.hq,
-          email: loggedIn.email,
-          visitCity: visitCity,
-          firmName: firmName,
-          contactPerson: contactPerson,
-          declaration: isYes(settings.declaration) ? "Yes" : "N/A",
-          pinCode: pinCode,
-          lat: currentLat,
-          lng: currentLng,
-          accuracy: currentAccuracy,
-          address: currentAddress,
-          remarks: remarks,
-          photoBase64: watermarkedPhotoBase64
-        }
-      })
+      var payload = buildPayload();
+
+      callApi(payload)
         .then(function (result) {
           if (result.status === "duplicate") {
             status.innerText = "⚠️ Is customer ki entry aaj pehle se ho chuki hai.";
@@ -375,20 +451,86 @@
             btn.disabled = false;
             return;
           }
-          status.innerText = "✅ Visit entry saved!";
-          document.getElementById('visitCity').value = "";
-          document.getElementById('firmName').value = "";
-          document.getElementById('contactPerson').value = "";
-          document.getElementById('pinCode').value = "";
-          document.getElementById('remarks').value = "";
-          document.getElementById('declaration').checked = false;
-          retakePhoto();
+          var flagMsg = (result.travelFlag && result.travelFlag !== "OK") ? (" — " + result.travelFlag) : "";
+          status.innerText = "✅ Visit entry saved!" + flagMsg;
+          resetFormAfterSubmit();
         })
         .catch(function (err) {
+          queueForOffline(payload);
+          status.innerText = "📴 Network nahi mila — entry offline save ho gayi. Net aane par automatically upload ho jayegi.";
           btn.disabled = false;
-          status.innerText = "❌ Error: " + err.message;
+          resetFormAfterSubmit();
         });
     }
+
+    function resetFormAfterSubmit() {
+      document.getElementById('visitCity').value = "";
+      document.getElementById('firmName').value = "";
+      document.getElementById('contactPerson').value = "";
+      document.getElementById('pinCode').value = "";
+      document.getElementById('remarks').value = "";
+      document.getElementById('declaration').checked = false;
+      document.getElementById('photoPreviewBox').style.display = 'none';
+      document.getElementById('selfiePreviewBox').style.display = 'none';
+      watermarkedPhotoBase64 = null;
+      selfiePhotoBase64 = null;
+      checkEnableSubmit();
+    }
+
+    // ============================================
+    // OFFLINE QUEUE
+    // ============================================
+    function getPendingQueue() {
+      try {
+        var raw = localStorage.getItem(PENDING_KEY);
+        return raw ? JSON.parse(raw) : [];
+      } catch (e) { return []; }
+    }
+
+    function setPendingQueue(queue) {
+      try {
+        localStorage.setItem(PENDING_KEY, JSON.stringify(queue));
+      } catch (e) {
+        console.error("Offline storage full or unavailable:", e);
+      }
+      updatePendingBanner();
+    }
+
+    function queueForOffline(payload) {
+      var queue = getPendingQueue();
+      queue.push(payload);
+      setPendingQueue(queue);
+    }
+
+    function updatePendingBanner() {
+      var queue = getPendingQueue();
+      var banner = document.getElementById('offlineBanner');
+      if (queue.length > 0) {
+        document.getElementById('offlineText').innerText = queue.length + " entries offline pending hain (upload nahi hui).";
+        banner.style.display = 'block';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    function trySync() {
+      var queue = getPendingQueue();
+      if (queue.length === 0) return;
+
+      var remaining = queue.slice();
+      var next = remaining.shift();
+
+      callApi(next)
+        .then(function () {
+          setPendingQueue(remaining);
+          trySync();
+        })
+        .catch(function () {
+          // Ab bhi network nahi hai — baad me try hoga
+        });
+    }
+
+    setInterval(trySync, 30000);
 
     function titleCase(str) {
       return str.replace(/\w\S*/g, function (t) {
