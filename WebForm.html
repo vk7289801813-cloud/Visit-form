@@ -68,15 +68,17 @@
       <textarea id="remarks" rows="3" placeholder="e.g. Order discuss hua, samples diye..."></textarea>
     </div>
 
-    <label>Visited Customer Photo (Live Camera Only)</label>
-    <video id="cameraVideo" autoplay playsinline style="width:100%; border-radius:6px; display:none; background:#000;"></video>
-    <button type="button" onclick="startCamera()" id="btnOpenCamera">📷 Open Camera</button>
-    <button type="button" onclick="capturePhoto()" id="btnCapture" style="display:none;">📸 Capture Photo</button>
-    <div class="photo-status" id="photoStatus"></div>
+    <div id="photoBlock">
+      <label>Visited Customer Photo (Live Camera Only)</label>
+      <video id="cameraVideo" autoplay playsinline style="width:100%; border-radius:6px; display:none; background:#000;"></video>
+      <button type="button" onclick="startCamera()" id="btnOpenCamera">📷 Open Camera</button>
+      <button type="button" onclick="capturePhoto()" id="btnCapture" style="display:none;">📸 Capture Photo</button>
+      <div class="photo-status" id="photoStatus"></div>
 
-    <div id="photoPreviewBox">
-      <img id="photoPreview">
-      <button class="secondary" onclick="retakePhoto()">🔄 Retake Photo</button>
+      <div id="photoPreviewBox">
+        <img id="photoPreview">
+        <button class="secondary" onclick="retakePhoto()">🔄 Retake Photo</button>
+      </div>
     </div>
 
     <div class="declaration" id="declarationBlock">
@@ -114,10 +116,14 @@
     // ---------- LOAD SETTINGS ON PAGE OPEN ----------
     function loadSettings() {
       callApi({ action: "getSettings" }).then(function (res) {
-        if (!res.success) return;
+        if (!res.success) {
+          document.getElementById('loginStatus').innerText = "⚠️ Settings load nahi hui: " + (res.message || "unknown error");
+          return;
+        }
         settings = res.settings;
         applySettings();
       }).catch(function (err) {
+        document.getElementById('loginStatus').innerText = "⚠️ Settings error: " + err.message;
         console.error("Settings load failed:", err);
       });
     }
@@ -132,13 +138,13 @@
 
       if (settings.logo_file_id) {
         var logoImg = document.getElementById('companyLogo');
-        logoImg.src = "https://drive.google.com/thumbnail?id=" + settings.logo_file_id + "&sz=w300";
+        logoImg.src = "https://lh3.googleusercontent.com/d/" + settings.logo_file_id;
         logoImg.style.display = 'inline-block';
       }
 
       if (settings.background_image_id) {
-        var url = "https://drive.google.com/thumbnail?id=" + settings.background_image_id + "&sz=w1000";
-        document.getElementById('pageBody').style.backgroundImage = "url('" + url + "')";
+        var bgUrl = "https://lh3.googleusercontent.com/d/" + settings.background_image_id;
+        document.getElementById('pageBody').style.backgroundImage = "url('" + bgUrl + "')";
         var opacity = settings.background_opacity ? parseFloat(settings.background_opacity) : 0.92;
         document.querySelector('.bg-overlay').style.background = "rgba(255,255,255," + opacity + ")";
       }
@@ -147,6 +153,12 @@
       document.getElementById('emailRow').style.display = isYes(settings.show_email) ? 'block' : 'none';
       document.getElementById('remarksBlock').style.display = isYes(settings.show_remarks) ? 'block' : 'none';
       document.getElementById('declarationBlock').style.display = isYes(settings.declaration) ? 'flex' : 'none';
+
+      // Photo / Live Camera dono me se koi bhi YES ho to hi photo section dikhega
+      var needPhoto = isYes(settings.photo_required) || isYes(settings.live_camera_required);
+      document.getElementById('photoBlock').style.display = needPhoto ? 'block' : 'none';
+
+      checkEnableSubmit();
     }
 
     function isYes(val) {
