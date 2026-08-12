@@ -13,6 +13,7 @@
     #status, #loginStatus { margin-top: 10px; font-weight: bold; }
     .logo-wrap { text-align: center; margin-bottom: 10px; }
     .logo-wrap img { max-width: 140px; max-height: 90px; }
+    .company-name { text-align: center; font-size: 20px; font-weight: bold; color: #333; margin-bottom: 10px; display: none; }
     .info-box { background: #f2f6ff; border-radius: 6px; padding: 10px; margin-bottom: 15px; font-size: 14px; }
     .info-box div { padding: 2px 0; }
     label { font-weight: bold; font-size: 14px; }
@@ -39,6 +40,7 @@
   <div class="logo-wrap">
     <img id="companyLogo" src="" alt="Company Logo" style="display:none;">
   </div>
+  <div class="company-name" id="companyNameText"></div>
 
   <!-- LOGIN -->
   <div id="loginSection">
@@ -140,6 +142,29 @@
       return val && val.toString().trim().toUpperCase() === "YES";
     }
 
+    // Google Drive image ke 3 alag URL formats try karta hai — kuch account/file settings
+    // me ek format kaam nahi karta, to agla try hota hai
+    function setImageWithFallback(imgId, fileId) {
+      var img = document.getElementById(imgId);
+      var formats = [
+        "https://lh3.googleusercontent.com/d/" + fileId,
+        "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w500",
+        "https://drive.google.com/uc?export=view&id=" + fileId
+      ];
+      var attempt = 0;
+      img.onerror = function () {
+        attempt++;
+        if (attempt < formats.length) {
+          img.src = formats[attempt];
+        } else {
+          img.style.display = 'none';
+          console.error("Logo/background image load fail hui — Drive file ki sharing 'Anyone with the link' par set hai ya nahi check karein.");
+        }
+      };
+      img.src = formats[0];
+      img.style.display = 'inline-block';
+    }
+
     // ============================================
     // SETTINGS
     // ============================================
@@ -164,14 +189,21 @@
       if (settings.login_title) document.getElementById('loginTitleText').innerText = settings.login_title;
       if (settings.submit_button_text) document.getElementById('btnSubmit').innerText = settings.submit_button_text;
 
+      if (settings.company_name) {
+        var nameEl = document.getElementById('companyNameText');
+        nameEl.innerText = settings.company_name;
+        nameEl.style.color = settings.company_name_color || "#333333";
+        nameEl.style.fontSize = (settings.company_name_font_size || "20") + "px";
+        nameEl.style.display = 'block';
+      }
+
       if (settings.logo_file_id) {
-        var logoImg = document.getElementById('companyLogo');
-        logoImg.src = "https://lh3.googleusercontent.com/d/" + settings.logo_file_id;
-        logoImg.style.display = 'inline-block';
+        setImageWithFallback('companyLogo', settings.logo_file_id);
       }
 
       if (settings.background_image_id) {
-        var bgUrl = "https://lh3.googleusercontent.com/d/" + settings.background_image_id;
+        var bgId = settings.background_image_id;
+        var bgUrl = "https://lh3.googleusercontent.com/d/" + bgId;
         document.getElementById('pageBody').style.backgroundImage = "url('" + bgUrl + "')";
         var opacity = settings.background_opacity ? parseFloat(settings.background_opacity) : 0.92;
         document.querySelector('.bg-overlay').style.background = "rgba(255,255,255," + opacity + ")";
