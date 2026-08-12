@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Market Visit Entry</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; max-width: 420px; margin: auto; background-size: cover; background-position: center; }
+    .bg-overlay { background: rgba(255,255,255,0.92); border-radius: 10px; padding: 15px; }
+    input, select, button, textarea { width: 100%; padding: 10px; margin: 8px 0; font-size: 16px; box-sizing: border-box; font-family: inherit; }
+    button { background: #4285f4; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button.secondary { background: #eee; color: #333; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    #status, #loginStatus { margin-top: 10px; font-weight: bold; }
+    .logo-wrap { text-align: center; margin-bottom: 10px; }
+    .logo-wrap img { max-width: 140px; max-height: 90px; }
+    .info-box { background: #f2f6ff; border-radius: 6px; padding: 10px; margin-bottom: 15px; font-size: 14px; }
+    .info-box div { padding: 2px 0; }
+    label { font-weight: bold; font-size: 14px; }
+    .declaration { display: flex; align-items: flex-start; gap: 8px; background: #fff8e1; padding: 10px; border-radius: 6px; }
+    .declaration input { width: auto; margin: 4px 0 0 0; }
+    .declaration span { font-size: 13px; }
+    #photoPreviewBox { display:none; text-align:center; margin-top:8px; }
+    #photoPreviewBox img { width: 100%; border-radius: 6px; border: 1px solid #ddd; }
+    .photo-status { font-size: 13px; color: #555; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body id="pageBody">
+<div class="bg-overlay">
+
+  <div class="logo-wrap">
+    <img id="companyLogo" src="" alt="Company Logo" style="display:none;">
+  </div>
+
+  <!-- LOGIN -->
+  <div id="loginSection">
+    <h3 id="loginTitleText">Login</h3>
+    <label>Employee ID</label>
+    <input type="text" id="loginEmployee" placeholder="EMP001">
+    <button onclick="checkLogin()">Login</button>
+    <div id="loginStatus"></div>
+  </div>
+
+  <!-- FORM -->
+  <div id="formSection" style="display:none;">
+    <h3 id="pageTitleText">Market Visit Entry</h3>
+
+    <div class="info-box">
+      <div><strong>Employee:</strong> <span id="infoName"></span> (<span id="infoEmpId"></span>)</div>
+      <div id="hqRow"><strong>Head Quarter:</strong> <span id="infoHQ"></span></div>
+      <div id="emailRow"><strong>Email:</strong> <span id="infoEmail"></span></div>
+    </div>
+
+    <label>To Visit City / District / State</label>
+    <input type="text" id="visitCity" placeholder="e.g. Noida, UP">
+
+    <label>Visited Customer Firm Name</label>
+    <input type="text" id="firmName" placeholder="Firm name">
+
+    <label>Visited Customer Contact Person Name</label>
+    <input type="text" id="contactPerson" placeholder="Contact person">
+
+    <label>Visited Customer Area Pin Code</label>
+    <input type="text" id="pinCode" placeholder="e.g. 201301" inputmode="numeric">
+
+    <div id="remarksBlock">
+      <label>Visit Remarks / Discussion Notes</label>
+      <textarea id="remarks" rows="3" placeholder="e.g. Order discuss hua, samples diye..."></textarea>
+    </div>
+
+    <label>Visited Customer Photo (Live Camera Only)</label>
+    <video id="cameraVideo" autoplay playsinline style="width:100%; border-radius:6px; display:none; background:#000;"></video>
+    <button type="button" onclick="startCamera()" id="btnOpenCamera">📷 Open Camera</button>
+    <button type="button" onclick="capturePhoto()" id="btnCapture" style="display:none;">📸 Capture Photo</button>
+    <div class="photo-status" id="photoStatus"></div>
+
+    <div id="photoPreviewBox">
+      <img id="photoPreview">
+      <button class="secondary" onclick="retakePhoto()">🔄 Retake Photo</button>
+    </div>
+
+    <div class="declaration" id="declarationBlock">
+      <input type="checkbox" id="declaration">
+      <span>I confirm that the above attendance and market visit details are true and correct.</span>
+    </div>
+
+    <button onclick="submitVisit()" id="btnSubmit" disabled>Submit Visit</button>
+    <div id="status"></div>
+
+    <button class="secondary" onclick="logout()" style="margin-top:20px;">Logout</button>
+  </div>
+
+  <canvas id="hiddenCanvas" style="display:none;"></canvas>
+
+</div>
+  <script>
+    // 🔴 YAHAN APNI APPS SCRIPT WEB APP URL DAALEIN 🔴
+    var APPS_SCRIPT_URL = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+
+    var settings = {};
+    var loggedIn = {};
+    var currentLat = null, currentLng = null, currentAddress = "", currentAccuracy = null;
+    var watermarkedPhotoBase64 = null;
+    var videoStream = null;
+
+    function callApi(payload) {
+      return fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" }, // preflight avoid karne ke liye
+        body: JSON.stringify(payload)
+      }).then(res => res.json());
+    }
+
+    // ---------- LOAD SETTINGS ON PAGE OPEN ----------
+    function loadSettings() {
+      callApi({ action: "getSettings" }).then(function (res) {
+        if (!res.success) return;
+        settings = res.settings;
+        applySettings();
+      }).catch(function (err) {
+        console.error("Settings load failed:", err);
+      });
+    }
+
+    function applySettings() {
+      if (settings.page_title) {
+        document.title = settings.page_title;
+        document.getElementById('pageTitleText').innerText = settings.page_title;
+      }
+      if (settings.login_title) document.getElementById('loginTitleText').innerText = settings.login_title;
+      if (settings.submit_button_text) document.getElementById('btnSubmit').innerText = settings.submit_button_text;
+
+      if (settings.logo_file_id) {
+        var logoImg = document.getElementById('companyLogo');
+        logoImg.src = "https://drive.google.com/thumbnail?id=" + settings.logo_file_id + "&sz=w300";
+        logoImg.style.display = 'inline-block';
+      }
+
+      if (settings.background_image_id) {
+        var url = "https://drive.google.com/thumbnail?id=" + settings.background_image_id + "&sz=w1000";
+        document.getElementById('pageBody').style.backgroundImage = "url('" + url + "')";
+        var opacity = settings.background_opacity ? parseFloat(settings.background_opacity) : 0.92;
+        document.querySelector('.bg-overlay').style.background = "rgba(255,255,255," + opacity + ")";
+      }
+
+      document.getElementById('hqRow').style.display = isYes(settings.show_hq) ? 'block' : 'none';
+      document.getElementById('emailRow').style.display = isYes(settings.show_email) ? 'block' : 'none';
+      document.getElementById('remarksBlock').style.display = isYes(settings.show_remarks) ? 'block' : 'none';
+      document.getElementById('declarationBlock').style.display = isYes(settings.declaration) ? 'flex' : 'none';
+    }
+
+    function isYes(val) {
+      return val && val.toString().trim().toUpperCase() === "YES";
+    }
+
+    loadSettings();
+
+    // ---------- LOGIN ----------
+    function checkLogin() {
+      var empId = document.getElementById('loginEmployee').value.trim();
+      var loginStatus = document.getElementById('loginStatus');
+      if (!empId) { loginStatus.innerText = "Employee ID bharein"; return; }
+      loginStatus.innerText = "Checking...";
+
+      callApi({ action: "verifyEmployee", empId: empId })
+        .then(function (result) {
+          if (result.success) {
+            loggedIn = result;
+            document.getElementById('loginSection').style.display = 'none';
+            document.getElementById('formSection').style.display = 'block';
+            document.getElementById('infoName').innerText = result.name;
+            document.getElementById('infoEmpId').innerText = result.empId;
+            document.getElementById('infoHQ').innerText = result.hq;
+            document.getElementById('infoEmail').innerText = result.email;
+          } else {
+            loginStatus.innerText = "❌ Employee ID nahi mila.";
+          }
+        })
+        .catch(function (err) { loginStatus.innerText = "Error: " + err.message; });
+    }
+
+    function logout() {
+      loggedIn = {};
+      watermarkedPhotoBase64 = null;
+      stopCamera();
+      document.getElementById('formSection').style.display = 'none';
+      document.getElementById('loginSection').style.display = 'block';
+      document.getElementById('loginEmployee').value = "";
+      document.getElementById('loginStatus').innerText = "";
+    }
+
+    // ---------- LIVE CAMERA ----------
+    function startCamera() {
+      var video = document.getElementById('cameraVideo');
+      var photoStatus = document.getElementById('photoStatus');
+      photoStatus.innerText = "";
+
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })
+        .then(function (stream) {
+          videoStream = stream;
+          video.srcObject = stream;
+          video.style.display = 'block';
+          document.getElementById('btnOpenCamera').style.display = 'none';
+          document.getElementById('btnCapture').style.display = 'block';
+        })
+        .catch(function (err) {
+          photoStatus.innerText = "Camera access error: " + err.message;
+        });
+    }
+
+    function capturePhoto() {
+      var photoStatus = document.getElementById('photoStatus');
+      photoStatus.innerText = "Location fetch ho raha hai...";
+      document.getElementById('btnSubmit').disabled = true;
+
+      navigator.geolocation.getCurrentPosition(function (position) {
+        currentLat = position.coords.latitude.toFixed(6);
+        currentLng = position.coords.longitude.toFixed(6);
+        currentAccuracy = Math.round(position.coords.accuracy);
+
+        var maxAcc = settings.max_gps_accuracy ? parseFloat(settings.max_gps_accuracy) : null;
+        if (maxAcc && currentAccuracy > maxAcc) {
+          photoStatus.innerText = "⚠️ GPS accuracy kam hai (" + currentAccuracy + "m). Khuli jagah me jaakar dobara try karein.";
+          return;
+        }
+
+        fetch("https://nominatim.openstreetmap.org/reverse?format=json&lat=" + currentLat + "&lon=" + currentLng)
+          .then(res => res.json())
+          .then(placeData => {
+            currentAddress = placeData.display_name || "N/A";
+            drawWatermarkFromVideo();
+          })
+          .catch(() => {
+            currentAddress = "N/A";
+            drawWatermarkFromVideo();
+          });
+
+      }, function (error) {
+        photoStatus.innerText = "Location error: " + error.message;
+      }, { enableHighAccuracy: true, timeout: 10000 });
+    }
+
+    function drawWatermarkFromVideo() {
+      var video = document.getElementById('cameraVideo');
+      var canvas = document.getElementById('hiddenCanvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      if (isYes(settings.watermark_required)) {
+        var now = new Date();
+        var dateTimeStr = now.toLocaleString();
+        var line1 = loggedIn.name + " | " + dateTimeStr;
+        var line2 = "Lat: " + currentLat + ", Lng: " + currentLng;
+
+        var fontSize = Math.max(16, Math.floor(canvas.width / 40));
+        ctx.font = fontSize + "px Arial";
+        var barHeight = fontSize * 2.8;
+
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(0, canvas.height - barHeight, canvas.width, barHeight);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(line1, 10, canvas.height - barHeight + fontSize);
+        ctx.fillText(line2, 10, canvas.height - barHeight + fontSize * 2);
+      }
+
+      watermarkedPhotoBase64 = canvas.toDataURL('image/jpeg', 0.85);
+
+      document.getElementById('photoPreview').src = watermarkedPhotoBase64;
+      document.getElementById('photoPreviewBox').style.display = 'block';
+      document.getElementById('photoStatus').innerText = "✅ Photo ready";
+
+      stopCamera();
+      checkEnableSubmit();
+    }
+
+    function stopCamera() {
+      if (videoStream) {
+        videoStream.getTracks().forEach(function (track) { track.stop(); });
+        videoStream = null;
+      }
+      document.getElementById('cameraVideo').style.display = 'none';
+      document.getElementById('btnCapture').style.display = 'none';
+      document.getElementById('btnOpenCamera').style.display = 'block';
+    }
+
+    function retakePhoto() {
+      document.getElementById('photoPreviewBox').style.display = 'none';
+      document.getElementById('photoStatus').innerText = "";
+      watermarkedPhotoBase64 = null;
+      checkEnableSubmit();
+      startCamera();
+    }
+
+    document.getElementById('declaration').addEventListener('change', checkEnableSubmit);
+
+    function checkEnableSubmit() {
+      var photoOk = isYes(settings.photo_required) ? !!watermarkedPhotoBase64 : true;
+      var declOk = isYes(settings.declaration) ? document.getElementById('declaration').checked : true;
+      document.getElementById('btnSubmit').disabled = !(photoOk && declOk);
+    }
+
+    // ---------- SUBMIT ----------
+    function submitVisit() {
+      var status = document.getElementById('status');
+      var btn = document.getElementById('btnSubmit');
+
+      var visitCity = titleCase(document.getElementById('visitCity').value.trim());
+      var firmName = document.getElementById('firmName').value.trim();
+      var contactPerson = document.getElementById('contactPerson').value.trim();
+      var pinCode = document.getElementById('pinCode').value.trim();
+      var remarks = document.getElementById('remarks').value.trim();
+
+      if (!visitCity || !firmName || !contactPerson || !pinCode) {
+        status.innerText = "Saari fields bharein.";
+        return;
+      }
+      if (isYes(settings.remarks_required) && !remarks) {
+        status.innerText = "Remarks bharna zaroori hai.";
+        return;
+      }
+      if (isYes(settings.photo_required) && !watermarkedPhotoBase64) {
+        status.innerText = "Photo capture karein.";
+        return;
+      }
+      if (isYes(settings.address_required) && !currentAddress) {
+        status.innerText = "Address fetch nahi hui, dobara photo capture karein.";
+        return;
+      }
+
+      btn.disabled = true;
+      status.innerText = "Saving...";
+
+      callApi({
+        action: "saveVisit",
+        data: {
+          empId: loggedIn.empId,
+          empName: loggedIn.name,
+          hq: loggedIn.hq,
+          email: loggedIn.email,
+          visitCity: visitCity,
+          firmName: firmName,
+          contactPerson: contactPerson,
+          declaration: isYes(settings.declaration) ? "Yes" : "N/A",
+          pinCode: pinCode,
+          lat: currentLat,
+          lng: currentLng,
+          accuracy: currentAccuracy,
+          address: currentAddress,
+          remarks: remarks,
+          photoBase64: watermarkedPhotoBase64
+        }
+      })
+        .then(function (result) {
+          if (result.status === "duplicate") {
+            status.innerText = "⚠️ Is customer ki entry aaj pehle se ho chuki hai.";
+            btn.disabled = false;
+            return;
+          }
+          if (result.status === "error") {
+            status.innerText = "❌ " + result.message;
+            btn.disabled = false;
+            return;
+          }
+          status.innerText = "✅ Visit entry saved!";
+          document.getElementById('visitCity').value = "";
+          document.getElementById('firmName').value = "";
+          document.getElementById('contactPerson').value = "";
+          document.getElementById('pinCode').value = "";
+          document.getElementById('remarks').value = "";
+          document.getElementById('declaration').checked = false;
+          retakePhoto();
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          status.innerText = "❌ Error: " + err.message;
+        });
+    }
+
+    function titleCase(str) {
+      return str.replace(/\w\S*/g, function (t) {
+        return t.charAt(0).toUpperCase() + t.substr(1).toLowerCase();
+      });
+    }
+  </script>
+</body>
+</html>
